@@ -1,0 +1,79 @@
+[
+  {
+    "id": "pancakes-fluffy",
+    "name": "Fluffy Pancakes",
+    "category": "breakfast",
+    "subcategories": ["sweet", "quick"],
+    "ingredients": ["flour", "milk", "egg", "sugar", "baking powder", "butter", "salt"],
+    "instructions": "Whisk dry. Add wet. Rest 5 min. Cook on medium until bubbles, flip, finish.",
+    "prepTime": "10 min",
+    "cookTime": "10 min",
+    "difficulty": "Easy"
+  },
+  {
+    "id": "avocado-toast",
+    "name": "Avocado Toast",
+    "category": "breakfast",
+    "subcategories": ["savory", "healthy", "quick"],
+    "ingredients": ["bread", "avocado", "salt", "pepper", "lemon"],
+    "instructions": "Toast bread. Mash avocado with lemon, salt, pepper. Spread and serve.",
+    "prepTime": "5 min",
+    "cookTime": "3 min",
+    "difficulty": "Easy"
+  },
+  {
+    "id": "chicken-pasta",
+    "name": "Creamy Chicken Pasta",
+    "category": "dinner",
+    "subcategories": ["pasta", "chicken", "one-pot"],
+    "ingredients": ["pasta", "chicken", "cream", "garlic", "onion", "butter", "parmesan"],
+    "instructions": "Sear chicken. Add aromatics. Pour cream, simmer. Toss with pasta and parmesan.",
+    "prepTime": "10 min",
+    "cookTime": "20 min",
+    "difficulty": "Medium"
+  },
+  {
+    "id": "veggie-stir-fry",
+    "name": "Veggie Stir-Fry",
+    "category": "dinner",
+    "subcategories": ["vegetarian", "quick"],
+    "ingredients": ["rice", "broccoli", "carrot", "pepper", "soy sauce", "garlic", "oil"],
+    "instructions": "Stir-fry veggies. Add soy sauce and garlic. Serve with steamed rice.",
+    "prepTime": "10 min",
+    "cookTime": "10 min",
+    "difficulty": "Easy"
+  },
+  {
+    "id": "yogurt-parfait",
+    "name": "Yogurt Parfait",
+    "category": "snack",
+    "subcategories": ["healthy", "no-bake", "sweet"],
+    "ingredients": ["yogurt", "granola", "honey", "berries"],
+    "instructions": "Layer yogurt, granola, and berries. Drizzle honey.",
+    "prepTime": "5 min",
+    "cookTime": "0 min",
+    "difficulty": "Easy"
+  },
+  {
+    "id": "no-bake-brownies",
+    "name": "No-Bake Brownies",
+    "category": "snack",
+    "subcategories": ["chocolatey", "no-bake"],
+    "ingredients": ["cocoa", "butter", "sugar", "oats", "vanilla", "salt"],
+    "instructions": "Melt butter with cocoa and sugar. Mix in oats, vanilla, salt. Press and chill.",
+    "prepTime": "10 min",
+    "cookTime": "0 min",
+    "difficulty": "Easy"
+  },
+  {
+    "id": "tomato-soup",
+    "name": "Tomato Soup",
+    "category": "lunch",
+    "subcategories": ["soup", "vegetarian", "quick"],
+    "ingredients": ["tomato", "onion", "garlic", "stock", "cream", "butter"],
+    "instructions": "Saute onion/garlic. Add tomato and stock. Simmer, blend, finish with cream.",
+    "prepTime": "10 min",
+    "cookTime": "15 min",
+    "difficulty": "Easy"
+  }
+]
