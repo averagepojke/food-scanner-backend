@@ -1,3 +1,2 @@
 #!/bin/sh
-npm install
-npm start
+node server.js
