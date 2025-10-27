@@ -20,7 +20,7 @@ const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPE
 
 const app = express();
 app.use(cors()); // Allow all origins for local dev
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '20mb' }));
 
 // Basic rate limiting
 const limiter = rateLimit({ windowMs: 60 * 1000, max: 60 });
@@ -49,6 +49,11 @@ console.log('   Port:', PORT);
 // --- ENDPOINTS ---
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'OCR.space Receipt Parser' });
+});
+
+app.get('/welcome', (req, res) => {
+  console.log(`Request received: ${req.method} ${req.path}`);
+  res.json({ message: 'Welcome to the Food Scanner API!' });
 });
 
 // --- External Recipes Aggregator ---
@@ -787,32 +792,85 @@ async function parseReceiptWithLLM(ocrText) {
 }
 
 function parseReceiptLinesRuleBased(lines) {
-  const priceRegex = /[£€$]?\s?(\d+\.\d{2})/g;
-  const quantityRegex = /^(\d+)\s+/;
-  return lines.map(line => {
-    // Find price (last match in the line)
-    let price = 0;
-    let match;
-    let lastMatch;
-    while ((match = priceRegex.exec(line)) !== null) {
-      lastMatch = match;
+  const items = [];
+  const priceRegex = /[£€$]\s?(\d+\.\d{2})/; // Only valid currency symbols
+  const quantityRegex = /^(\d+)\s*M?\s+/; // Handle "2M" or "2 M" patterns
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+
+    // Skip obvious non-item lines
+    if (!line || /^\d{2}\/\d{2}\/\d{2,4}/.test(line) || /^\d{2}:\d{2}/.test(line) ||
+        /^total/i.test(line) || /^subtotal/i.test(line) || /^balance/i.test(line) ||
+        /^discount/i.test(line) || /^change/i.test(line) || /^payment/i.test(line) ||
+        /^cash/i.test(line) || /^card/i.test(line) || /^visa/i.test(line) ||
+        /^mastercard/i.test(line) || /^contactless/i.test(line) || /^thank/i.test(line) ||
+        /^receipt/i.test(line) || /^vat/i.test(line) || /^tax/i.test(line) ||
+        /^www\./i.test(line) || /\.com/i.test(line) || /^tel:/i.test(line) ||
+        /^store/i.test(line) || /^manager/i.test(line) || /^since/i.test(line) ||
+        /^description/i.test(line) || /^price/i.test(line) || /^qty/i.test(line) ||
+        /^[*\-=_\s]+$/.test(line) || /^aid/i.test(line) || /^pan/i.test(line) ||
+        /^amount/i.test(line) || /^card/i.test(line) || /^contactless/i.test(line) ||
+        /^m\s+pasta\s+offer/i.test(line) || /^balance\s+due/i.test(line) ||
+        /^more\s+discount/i.test(line) || /^visa\s+payment/i.test(line)) {
+      continue;
     }
-    if (lastMatch) price = parseFloat(lastMatch[1]);
-    // Find quantity (at start)
-    let quantity = 1;
-    let nameStart = 0;
-    const quantityMatch = quantityRegex.exec(line);
-    if (quantityMatch) {
-      quantity = parseInt(quantityMatch[1], 10);
-      nameStart = quantityMatch[0].length;
+
+    const priceMatch = line.match(priceRegex);
+    if (priceMatch) {
+      const price = parseFloat(priceMatch[1]);
+
+      let name = '';
+      let quantity = 1;
+
+      // Look to the previous line for the name
+      if (i > 0) {
+        const prevLine = lines[i - 1].trim();
+        if (prevLine && !prevLine.match(priceRegex) && /[A-Za-z]/.test(prevLine)) {
+          const qtyMatch = prevLine.match(quantityRegex);
+          if (qtyMatch) {
+            quantity = parseInt(qtyMatch[1], 10);
+            name = prevLine.slice(qtyMatch[0].length).trim();
+          } else {
+            name = prevLine;
+          }
+        }
+      }
+
+      // If no name from previous, try same line before price
+      if (!name) {
+        const priceIndex = line.indexOf(priceMatch[0]);
+        if (priceIndex > 0) {
+          const namePart = line.slice(0, priceIndex).trim();
+          const qtyMatch = namePart.match(quantityRegex);
+          if (qtyMatch) {
+            quantity = parseInt(qtyMatch[1], 10);
+            name = namePart.slice(qtyMatch[0].length).trim();
+          } else {
+            name = namePart;
+          }
+        }
+      }
+
+      // Clean up the name
+      if (name) {
+        // Remove OCR artifacts but keep currency symbols in names
+        name = name.replace(/[^A-Za-z0-9 '£€$\-&]/g, ' ').replace(/\s+/g, ' ').trim();
+
+        // Validate name
+        if (name.length > 2 && /[A-Za-z]{2,}/.test(name) && price > 0) {
+          items.push({ quantity, name, price });
+        }
+      }
     }
-    // Name: everything between quantity and price
-    let name = line;
-    if (lastMatch) {
-      name = line.slice(nameStart, lastMatch.index).replace(/[^A-Za-z0-9 '\-]/g, ' ').replace(/\s+/g, ' ').trim();
-    } else if (nameStart > 0) {
-      name = line.slice(nameStart).replace(/[^A-Za-z0-9 '\-]/g, ' ').replace(/\s+/g, ' ').trim();
-    }
-    return { quantity, name, price };
-  }).filter(item => item.name && item.price > 0);
+  }
+
+  // Remove duplicates
+  const seen = new Set();
+  return items.filter(item => {
+    const key = `${item.name.toLowerCase()}-${item.price.toFixed(2)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
