@@ -579,12 +579,23 @@ app.post('/api/parse-receipt', async (req, res) => {
     formData.append('base64Image', `data:${mimeType};base64,${cleanBase64}`);
 
     const response = await fetch('https://api.ocr.space/parse/image', {
-      method: 'POST',
-      body: formData,
-      headers: formData.getHeaders(),
-    });
+  method: 'POST',
+  body: formData,
+  headers: formData.getHeaders(),
+});
 
-    const ocrResult = await response.json();
+let ocrResult;
+try {
+  const responseText = await response.text();
+  console.log('📝 OCR.space raw response (first 500 chars):', responseText.substring(0, 500));
+  ocrResult = JSON.parse(responseText);
+} catch (parseError) {
+  console.error('❌ Failed to parse OCR response:', parseError);
+  return res.status(500).json({
+    error: 'OCR processing failed',
+    details: 'OCR service returned invalid response'
+  });
+}
     
     console.log('📝 OCR.space response status:', response.status);
     console.log('📝 OCR.space response:', JSON.stringify(ocrResult, null, 2));
