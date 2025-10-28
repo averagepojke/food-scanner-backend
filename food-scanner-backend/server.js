@@ -36,7 +36,11 @@ app.use((req, res, next) => {
 });
 
 // --- CONFIGURATION ---
-const OCR_SPACE_API_KEY = process.env.OCR_SPACE_API_KEY || 'K81014695188957';
+const OCR_SPACE_API_KEY = process.env.OCR_SPACE_API_KEY;
+if (!OCR_SPACE_API_KEY) {
+  console.error('❌ OCR_SPACE_API_KEY not set in environment variables. Please get an API key from https://ocr.space/ocrapi and set it in your .env file.');
+  process.exit(1);
+}
 const PORT = process.env.PORT || 3001;
 
 // --- LOG CONFIG ON STARTUP ---
@@ -578,19 +582,39 @@ app.post('/api/parse-receipt', async (req, res) => {
     formData.append('OCREngine', '2'); // Engine 2 is better for receipts
     formData.append('base64Image', `data:${mimeType};base64,${cleanBase64}`);
 
+    console.log('📤 Sending request to OCR.space API...');
     const response = await fetch('https://api.ocr.space/parse/image', {
-  method: 'POST',
-  body: formData,
-  headers: formData.getHeaders(),
-});
+      method: 'POST',
+      body: formData,
+      headers: formData.getHeaders(),
+    });
+    console.log('📥 OCR.space response status:', response.status);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ OCR.space HTTP error:', response.status, errorText);
+      throw new Error(`OCR.space API error: ${response.status} - ${errorText}`);
+    }
 
 let ocrResult;
 try {
   const responseText = await response.text();
   console.log('📝 OCR.space raw response (first 500 chars):', responseText.substring(0, 500));
+
+  // Check if response looks like HTML error page
+  if (responseText.includes('<html') || responseText.includes('<!DOCTYPE')) {
+    console.error('❌ OCR.space returned HTML error page instead of JSON');
+    console.error('Full response:', responseText);
+    return res.status(500).json({
+      error: 'OCR processing failed',
+      details: 'OCR service returned HTML error page - likely invalid API key or service issue'
+    });
+  }
+
   ocrResult = JSON.parse(responseText);
 } catch (parseError) {
   console.error('❌ Failed to parse OCR response:', parseError);
+  console.error('Response was:', responseText);
   return res.status(500).json({
     error: 'OCR processing failed',
     details: 'OCR service returned invalid response'
@@ -604,10 +628,14 @@ try {
     if (ocrResult.IsErroredOnProcessing) {
       const errorMsg = ocrResult.ErrorMessage?.[0] || ocrResult.ErrorDetails || 'Unknown OCR error';
       console.error('❌ OCR.space processing error:', errorMsg);
+      console.error('Full OCR result:', JSON.stringify(ocrResult, null, 2));
       throw new Error(errorMsg);
     }
 
+    // Check if we have valid results
     if (!ocrResult.ParsedResults || ocrResult.ParsedResults.length === 0) {
+      console.error('❌ No ParsedResults in OCR response');
+      console.error('Full OCR result:', JSON.stringify(ocrResult, null, 2));
       throw new Error('No text could be extracted from the image');
     }
 
