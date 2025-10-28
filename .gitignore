@@ -32,6 +32,9 @@ yarn-error.*
 
 # local env files
 .env*.local
+.env
+food-scanner-backend/.env
+food-scanner-backend/*.json
 
 # typescript
 *.tsbuildinfo

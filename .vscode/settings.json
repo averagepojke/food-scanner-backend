@@ -1,0 +1,9 @@
+{
+    "editor.quickSuggestions": {
+        "other": true,
+        "comments": true,
+        "strings": true
+    },
+    "editor.suggestOnTriggerCharacters": true,
+    "CodeGPT.apiKey": "LM Studio"
+}
