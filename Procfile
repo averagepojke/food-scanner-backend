@@ -1,1 +1,1 @@
-web: cd food-scanner-backend && npm install && node server.js
+web: cd food-scanner-backend ;; npm install ;; node server.js
