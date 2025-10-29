@@ -113,6 +113,37 @@ function mapDishTypesToCategory(dishTypes) {
   return 'dinner';
 }
 
+async function extractTextWithOpenAi(base64, mimeType) {
+  if (!openai) return null;
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0,
+      messages: [
+        { role: 'system', content: 'You are a transcription engine that returns plain receipt text exactly as shown.' },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Extract the full receipt text. Use newline per line. Do not add any commentary.' },
+            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } }
+          ]
+        }
+      ]
+    });
+    const message = response.choices?.[0]?.message;
+    if (!message) return null;
+    if (Array.isArray(message.content)) {
+      const text = message.content.map(part => part.text || '').join('\n').trim();
+      return text.length > 0 ? text : null;
+    }
+    const text = String(message.content || '').trim();
+    return text.length > 0 ? text : null;
+  } catch (err) {
+    console.warn('OpenAI vision fallback failed:', err.message);
+    return null;
+  }
+}
+
 const RECIPE_FREE_ONLY = String(process.env.RECIPE_FREE_ONLY || '').trim() === '1';
 const recipeCache = new Map();
 const RECIPE_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
@@ -661,6 +692,26 @@ app.post('/api/parse-receipt', async (req, res) => {
     }
 
     if (!ocrResult) {
+      console.log('♻️ Falling back to OpenAI vision OCR');
+      const aiText = await extractTextWithOpenAi(cleanBase64, mimeType);
+      if (aiText) {
+        const aiLines = aiText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+        let aiItems = parseReceiptLinesRuleBased(aiLines);
+        if (openai) {
+          try {
+            aiItems = await categorizeLineItemsWithAI(aiItems);
+          } catch (err) {
+            console.warn('AI categorization failed for OpenAI OCR:', err.message);
+          }
+        }
+        return res.json({
+          success: true,
+          text: aiText,
+          lineItems: aiItems,
+          confidence: 0.6,
+          source: 'openai-vision'
+        });
+      }
       console.error('❌ OCR.space failed after retries:', lastError?.message || lastError);
       return res.status(502).json({
         error: 'OCR processing failed',
