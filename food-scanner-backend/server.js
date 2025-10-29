@@ -584,9 +584,33 @@ app.post('/api/parse-receipt', async (req, res) => {
     // --- OCR.space API Request with FILE UPLOAD ---
     const filename = mimeType === 'image/png' ? 'receipt.png' : 'receipt.jpg';
 
-    async function submitOcr(formData, label) {
-      console.log('📤 Sending OCR request:', label);
-      const response = await fetch('https://api.ocr.space/parse/image', {
+    async function submitOcrAttempt({ endpoint, engine, useBase64, label }) {
+      const formData = new FormData();
+      formData.append('apikey', OCR_SPACE_API_KEY);
+      formData.append('language', 'eng');
+      formData.append('isOverlayRequired', 'false');
+      formData.append('detectOrientation', 'true');
+      formData.append('scale', 'true');
+      formData.append('OCREngine', engine);
+      if (useBase64) {
+        formData.append('base64Image', `data:${mimeType};base64,${cleanBase64}`);
+      } else {
+        formData.append('file', imageBuffer, {
+          filename,
+          contentType: mimeType
+        });
+      }
+
+      console.log('📤 Sending OCR request:', label, {
+        endpoint,
+        engine,
+        mode: useBase64 ? 'base64' : 'file',
+        size: `${imageSizeMB.toFixed(2)}MB`,
+        contentType: mimeType,
+        apiKeyPrefix: OCR_SPACE_API_KEY.substring(0, 10)
+      });
+
+      const response = await fetch(endpoint, {
         method: 'POST',
         body: formData,
         headers: formData.getHeaders(),
@@ -595,7 +619,7 @@ app.post('/api/parse-receipt', async (req, res) => {
       const responseText = await response.text();
       console.log('📝 OCR.space raw response (first 500 chars):', responseText.substring(0, 500));
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        throw new Error(responseText || `HTTP ${response.status}`);
       }
       if (!responseText.trim().startsWith('{') && !responseText.trim().startsWith('[')) {
         throw new Error(responseText);
@@ -612,51 +636,27 @@ app.post('/api/parse-receipt', async (req, res) => {
       return parsed;
     }
 
+    const attempts = [
+      { endpoint: 'https://api.ocr.space/parse/image', engine: '2', useBase64: false, label: 'file-engine2' },
+      { endpoint: 'https://api.ocr.space/parse/image', engine: '1', useBase64: false, label: 'file-engine1' },
+      { endpoint: 'https://api.ocr.space/parse/image', engine: '2', useBase64: true, label: 'base64-engine2' },
+      { endpoint: 'https://api.ocr.space/parse/image', engine: '1', useBase64: true, label: 'base64-engine1' },
+      { endpoint: 'https://apipro1.ocr.space/parse/image', engine: '2', useBase64: false, label: 'file-engine2-proxy1' },
+      { endpoint: 'https://apipro1.ocr.space/parse/image', engine: '1', useBase64: true, label: 'base64-engine1-proxy1' },
+    ];
+
     let ocrResult;
     let lastError;
 
-    try {
-      const formDataFile = new FormData();
-      formDataFile.append('apikey', OCR_SPACE_API_KEY);
-      formDataFile.append('language', 'eng');
-      formDataFile.append('isOverlayRequired', 'false');
-      formDataFile.append('detectOrientation', 'true');
-      formDataFile.append('scale', 'true');
-      formDataFile.append('OCREngine', '2');
-      formDataFile.append('file', imageBuffer, {
-        filename,
-        contentType: mimeType
-      });
-      console.log('📤 Sending file upload to OCR.space:', {
-        size: `${imageSizeMB.toFixed(2)}MB`,
-        filename,
-        contentType: mimeType,
-        apiKeyPrefix: OCR_SPACE_API_KEY.substring(0, 10)
-      });
-      ocrResult = await submitOcr(formDataFile, 'file');
-    } catch (err) {
-      lastError = err;
-      console.warn('⚠️ File upload OCR failed:', err.message);
-    }
-
-    if (!ocrResult) {
+    for (const attempt of attempts) {
       try {
-        const formDataBase64 = new FormData();
-        formDataBase64.append('apikey', OCR_SPACE_API_KEY);
-        formDataBase64.append('language', 'eng');
-        formDataBase64.append('isOverlayRequired', 'false');
-        formDataBase64.append('detectOrientation', 'true');
-        formDataBase64.append('scale', 'true');
-        formDataBase64.append('OCREngine', '2');
-        formDataBase64.append('base64Image', `data:${mimeType};base64,${cleanBase64}`);
-        console.log('📤 Sending base64 upload to OCR.space:', {
-          size: `${imageSizeMB.toFixed(2)}MB`,
-          contentType: mimeType,
-          apiKeyPrefix: OCR_SPACE_API_KEY.substring(0, 10)
-        });
-        ocrResult = await submitOcr(formDataBase64, 'base64');
+        ocrResult = await submitOcrAttempt(attempt);
+        if (ocrResult) {
+          break;
+        }
       } catch (err) {
         lastError = err;
+        console.warn('⚠️ OCR attempt failed:', attempt.label, err.message);
       }
     }
 
