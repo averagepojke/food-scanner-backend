@@ -587,23 +587,58 @@ app.post('/api/parse-receipt', async (req, res) => {
     formData.append('scale', 'true');
     formData.append('OCREngine', '2'); // Engine 2 is better for receipts
     formData.append('base64Image', `data:${mimeType};base64,${cleanBase64}`);
+// Replace lines 590-603 in your server.js with this:
 
-    const response = await fetch('https://api.ocr.space/parse/image', {
+const response = await fetch('https://api.ocr.space/parse/image', {
   method: 'POST',
   body: formData,
   headers: formData.getHeaders(),
 });
 
+console.log('📝 OCR.space HTTP status:', response.status);
+
 let ocrResult;
 try {
   const responseText = await response.text();
   console.log('📝 OCR.space raw response (first 500 chars):', responseText.substring(0, 500));
+  
+  // Check if response is plain text error
+  if (!responseText.trim().startsWith('{') && !responseText.trim().startsWith('[')) {
+    console.error('❌ OCR.space returned non-JSON response:', responseText);
+    throw new Error(`OCR.space error: ${responseText}`);
+  }
+  
   ocrResult = JSON.parse(responseText);
+  
+  // Check for OCR.space API error responses
+  if (ocrResult.OCRExitCode > 1) {
+    const errorMsg = ocrResult.ErrorMessage?.[0] || 'Unknown OCR error';
+    console.error('❌ OCR.space API error:', errorMsg);
+    throw new Error(`OCR API error: ${errorMsg}`);
+  }
+  
 } catch (parseError) {
   console.error('❌ Failed to parse OCR response:', parseError);
   return res.status(500).json({
     error: 'OCR processing failed',
-    details: 'OCR service returned invalid response'
+    details: parseError.message || 'OCR service returned invalid response'
+  });
+}
+
+// Check for processing errors
+if (ocrResult.IsErroredOnProcessing) {
+  const errorMsg = ocrResult.ErrorMessage?.[0] || ocrResult.ErrorDetails || 'Unknown OCR error';
+  console.error('❌ OCR.space processing error:', errorMsg);
+  return res.status(500).json({
+    error: 'OCR processing failed', 
+    details: errorMsg
+  });
+}
+
+if (!ocrResult.ParsedResults || ocrResult.ParsedResults.length === 0) {
+  return res.status(500).json({
+    error: 'OCR processing failed',
+    details: 'No text could be extracted from the image'
   });
 }
     
