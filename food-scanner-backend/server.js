@@ -52,7 +52,7 @@ const PORT = process.env.PORT || 3001;
 // --- LOG CONFIG ON STARTUP ---
 console.log('🚀 Server starting up...');
 console.log('📋 Configuration:');
-console.log('   OCR.space API Key:', OCR_SPACE_API_KEY ? '✅' : '❌');
+console.log('   OCR.space API Key:', OCR_SPACE_API_KEY ? `✅ (${OCR_SPACE_API_KEY.substring(0, 10)}...)` : '❌');
 console.log('   OpenAI API Key:', openai ? '✅' : '❌');
 console.log('   Port:', PORT);
 
