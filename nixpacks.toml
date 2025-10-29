@@ -1,11 +1,9 @@
 [phases.setup]
 nixPkgs = ["nodejs_20"]
+nixpkgsArchive = "ba913eda2df8eb72147259189d55932012df6301"
 
 [phases.install]
-cmds = ["cd food-scanner-backend && npm install"]
-
-[phases.build]
-cmds = ["echo 'No build step needed'"]
+cmds = ["cd food-scanner-backend && npm ci --only=production"]
 
 [start]
 cmd = "cd food-scanner-backend && node server.js"
