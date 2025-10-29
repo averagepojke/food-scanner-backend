@@ -18,12 +18,17 @@ const { OpenAI } = require('openai');
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
 const app = express();
-app.set('trust proxy', true); // ← Add this line
+app.set('trust proxy', 1); // Trust first proxy (Railway)
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
 
-// Basic rate limiting
-const limiter = rateLimit({ windowMs: 60 * 1000, max: 60 });
+// Basic rate limiting with proper proxy config
+const limiter = rateLimit({ 
+  windowMs: 60 * 1000, 
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 app.use(limiter);
 
 // Optional bearer auth for production environments
