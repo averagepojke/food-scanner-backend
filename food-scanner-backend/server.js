@@ -18,6 +18,7 @@ const { OpenAI } = require('openai');
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
 const app = express();
+app.set('trust proxy', true); // ← Add this line
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
 
