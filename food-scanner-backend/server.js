@@ -582,71 +582,89 @@ app.post('/api/parse-receipt', async (req, res) => {
 // Replace everything from line 575 to line 650 with this single clean version:
 
     // --- OCR.space API Request with FILE UPLOAD ---
-    const formData = new FormData();
-    formData.append('apikey', OCR_SPACE_API_KEY);
-    formData.append('language', 'eng');
-    formData.append('isOverlayRequired', 'false');
-    formData.append('detectOrientation', 'true');
-    formData.append('scale', 'true');
-    formData.append('OCREngine', '2'); // Engine 2 is better for receipts
-
-    // Use file upload instead of base64 (more reliable)
     const filename = mimeType === 'image/png' ? 'receipt.png' : 'receipt.jpg';
-    formData.append('file', imageBuffer, {
-      filename: filename,
-      contentType: mimeType
-    });
 
-    console.log('📤 Sending file upload to OCR.space:', {
-      size: `${imageSizeMB.toFixed(2)}MB`,
-      filename,
-      contentType: mimeType,
-      apiKeyPrefix: OCR_SPACE_API_KEY.substring(0, 10)
-    });
-
-    const response = await fetch('https://api.ocr.space/parse/image', {
-      method: 'POST',
-      body: formData,
-      headers: formData.getHeaders(),
-    });
-
-    console.log('📝 OCR.space HTTP status:', response.status);
-
-    let ocrResult;
-    try {
+    async function submitOcr(formData, label) {
+      console.log('📤 Sending OCR request:', label);
+      const response = await fetch('https://api.ocr.space/parse/image', {
+        method: 'POST',
+        body: formData,
+        headers: formData.getHeaders(),
+      });
+      console.log('📝 OCR.space HTTP status:', response.status);
       const responseText = await response.text();
       console.log('📝 OCR.space raw response (first 500 chars):', responseText.substring(0, 500));
-      
-      // Check if response is plain text error
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
       if (!responseText.trim().startsWith('{') && !responseText.trim().startsWith('[')) {
-        console.error('❌ OCR.space returned non-JSON response:', responseText);
-        throw new Error(`OCR.space error: ${responseText}`);
+        throw new Error(responseText);
       }
-      
-      ocrResult = JSON.parse(responseText);
-      
-      // Check for OCR.space API error responses
-      if (ocrResult.OCRExitCode > 1) {
-        const errorMsg = ocrResult.ErrorMessage?.[0] || 'Unknown OCR error';
-        console.error('❌ OCR.space API error:', errorMsg);
-        throw new Error(`OCR API error: ${errorMsg}`);
+      const parsed = JSON.parse(responseText);
+      if (parsed.OCRExitCode > 1) {
+        const message = parsed.ErrorMessage?.[0] || 'Unknown OCR error';
+        throw new Error(message);
       }
-      
-    } catch (parseError) {
-      console.error('❌ Failed to parse OCR response:', parseError);
-      return res.status(500).json({
-        error: 'OCR processing failed',
-        details: parseError.message || 'OCR service returned invalid response'
-      });
+      if (parsed.IsErroredOnProcessing) {
+        const message = parsed.ErrorMessage?.[0] || parsed.ErrorDetails || 'Unknown OCR error';
+        throw new Error(message);
+      }
+      return parsed;
     }
 
-    // Check for processing errors
-    if (ocrResult.IsErroredOnProcessing) {
-      const errorMsg = ocrResult.ErrorMessage?.[0] || ocrResult.ErrorDetails || 'Unknown OCR error';
-      console.error('❌ OCR.space processing error:', errorMsg);
-      return res.status(500).json({
-        error: 'OCR processing failed', 
-        details: errorMsg
+    let ocrResult;
+    let lastError;
+
+    try {
+      const formDataFile = new FormData();
+      formDataFile.append('apikey', OCR_SPACE_API_KEY);
+      formDataFile.append('language', 'eng');
+      formDataFile.append('isOverlayRequired', 'false');
+      formDataFile.append('detectOrientation', 'true');
+      formDataFile.append('scale', 'true');
+      formDataFile.append('OCREngine', '2');
+      formDataFile.append('file', imageBuffer, {
+        filename,
+        contentType: mimeType
+      });
+      console.log('📤 Sending file upload to OCR.space:', {
+        size: `${imageSizeMB.toFixed(2)}MB`,
+        filename,
+        contentType: mimeType,
+        apiKeyPrefix: OCR_SPACE_API_KEY.substring(0, 10)
+      });
+      ocrResult = await submitOcr(formDataFile, 'file');
+    } catch (err) {
+      lastError = err;
+      console.warn('⚠️ File upload OCR failed:', err.message);
+    }
+
+    if (!ocrResult) {
+      try {
+        const formDataBase64 = new FormData();
+        formDataBase64.append('apikey', OCR_SPACE_API_KEY);
+        formDataBase64.append('language', 'eng');
+        formDataBase64.append('isOverlayRequired', 'false');
+        formDataBase64.append('detectOrientation', 'true');
+        formDataBase64.append('scale', 'true');
+        formDataBase64.append('OCREngine', '2');
+        formDataBase64.append('base64Image', `data:${mimeType};base64,${cleanBase64}`);
+        console.log('📤 Sending base64 upload to OCR.space:', {
+          size: `${imageSizeMB.toFixed(2)}MB`,
+          contentType: mimeType,
+          apiKeyPrefix: OCR_SPACE_API_KEY.substring(0, 10)
+        });
+        ocrResult = await submitOcr(formDataBase64, 'base64');
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    if (!ocrResult) {
+      console.error('❌ OCR.space failed after retries:', lastError?.message || lastError);
+      return res.status(502).json({
+        error: 'OCR processing failed',
+        details: lastError?.message || 'OCR provider error'
       });
     }
 
