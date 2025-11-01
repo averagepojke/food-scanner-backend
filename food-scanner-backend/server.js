@@ -1,13 +1,11 @@
-// server.js
+// server.js - Google Cloud Vision Edition
 // --- SETUP INSTRUCTIONS ---
-// 1. npm install express cors express-rate-limit dotenv openai form-data node-fetch
-// 2. Create .env file with your API keys
-// 3. Set OCR_SPACE_API_KEY in .env or use the default free key
-// 4. Optional: Set OPENAI_API_KEY for AI categorization
-// 5. Optional: Set SPOONACULAR_API_KEY for recipe search
+// 1. npm install express cors express-rate-limit dotenv openai form-data node-fetch @google-cloud/vision
+// 2. Create .env file with: GOOGLE_CLOUD_VISION_API_KEY=your_key_here
+// 3. Optional: Set OPENAI_API_KEY for AI categorization and meal suggestions
 
 require('dotenv').config();
-console.log('🔧 Environment loaded, API keys configured:', process.env.OPENAI_API_KEY ? '✅' : '❌');
+console.log('🔧 Environment loaded');
 
 const express = require('express');
 const cors = require('cors');
@@ -17,12 +15,13 @@ const FormData = require('form-data');
 const { OpenAI } = require('openai');
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
+const GOOGLE_VISION_API_KEY = process.env.GOOGLE_CLOUD_VISION_API_KEY;
+
 const app = express();
-app.set('trust proxy', 1); // Trust first proxy (Railway)
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
 
-// Basic rate limiting with proper proxy config
 const limiter = rateLimit({ 
   windowMs: 60 * 1000, 
   max: 60,
@@ -31,7 +30,6 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// Optional bearer auth for production environments
 const API_BEARER = process.env.API_BEARER_TOKEN;
 app.use((req, res, next) => {
   if (!API_BEARER) return next();
@@ -41,24 +39,22 @@ app.use((req, res, next) => {
   return res.status(401).json({ ok: false, error: 'Unauthorized' });
 });
 
-// --- CONFIGURATION ---
-const OCR_SPACE_API_KEY = process.env.OCR_SPACE_API_KEY;
-if (!OCR_SPACE_API_KEY) {
-  console.error('❌ OCR_SPACE_API_KEY not set in environment variables. Please get an API key from https://ocr.space/ocrapi and set it in your .env file.');
-  process.exit(1);
-}
 const PORT = process.env.PORT || 3001;
 
 // --- LOG CONFIG ON STARTUP ---
 console.log('🚀 Server starting up...');
 console.log('📋 Configuration:');
-console.log('   OCR.space API Key:', OCR_SPACE_API_KEY ? `✅ (${OCR_SPACE_API_KEY.substring(0, 10)}...)` : '❌');
+console.log('   Google Cloud Vision API Key:', GOOGLE_VISION_API_KEY ? `✅ (${GOOGLE_VISION_API_KEY.substring(0, 10)}...)` : '❌');
 console.log('   OpenAI API Key:', openai ? '✅' : '❌');
 console.log('   Port:', PORT);
 
+if (!GOOGLE_VISION_API_KEY) {
+  console.error('❌ GOOGLE_CLOUD_VISION_API_KEY not set. Get one from https://console.cloud.google.com/');
+}
+
 // --- ENDPOINTS ---
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', service: 'OCR.space Receipt Parser' });
+  res.json({ status: 'OK', service: 'Google Cloud Vision Receipt Parser' });
 });
 
 app.get('/welcome', (req, res) => {
@@ -111,37 +107,6 @@ function mapDishTypesToCategory(dishTypes) {
   if (types.includes('lunch') || types.includes('salad') || types.includes('sandwich') || types.includes('soup')) return 'lunch';
   if (types.includes('dessert') || types.includes('snack')) return 'snack';
   return 'dinner';
-}
-
-async function extractTextWithOpenAi(base64, mimeType) {
-  if (!openai) return null;
-  try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      temperature: 0,
-      messages: [
-        { role: 'system', content: 'You are a transcription engine that returns plain receipt text exactly as shown.' },
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: 'Extract the full receipt text. Use newline per line. Do not add any commentary.' },
-            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } }
-          ]
-        }
-      ]
-    });
-    const message = response.choices?.[0]?.message;
-    if (!message) return null;
-    if (Array.isArray(message.content)) {
-      const text = message.content.map(part => part.text || '').join('\n').trim();
-      return text.length > 0 ? text : null;
-    }
-    const text = String(message.content || '').trim();
-    return text.length > 0 ? text : null;
-  } catch (err) {
-    console.warn('OpenAI vision fallback failed:', err.message);
-    return null;
-  }
 }
 
 const RECIPE_FREE_ONLY = String(process.env.RECIPE_FREE_ONLY || '').trim() === '1';
@@ -565,7 +530,60 @@ async function categorizeLineItemsWithAI(lineItems) {
   return lineItems.map(item => ({ ...item, category: 'other' }));
 }
 
-// --- RECEIPT PARSING WITH OCR.SPACE ---
+// --- GOOGLE CLOUD VISION OCR ---
+async function extractTextWithGoogleVision(base64Image) {
+  if (!GOOGLE_VISION_API_KEY) {
+    throw new Error('Google Cloud Vision API key not configured');
+  }
+
+  const apiUrl = `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`;
+  
+  const requestBody = {
+    requests: [
+      {
+        image: {
+          content: base64Image
+        },
+        features: [
+          {
+            type: 'DOCUMENT_TEXT_DETECTION',
+            maxResults: 1
+          }
+        ]
+      }
+    ]
+  };
+
+  console.log('📤 Sending request to Google Cloud Vision API');
+  
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(requestBody)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('❌ Google Vision API error:', response.status, errorText);
+    throw new Error(`Google Vision API error: ${response.status}`);
+  }
+
+  const result = await response.json();
+  
+  if (result.responses && result.responses[0]) {
+    const textAnnotation = result.responses[0].fullTextAnnotation;
+    if (textAnnotation && textAnnotation.text) {
+      console.log('✅ Google Vision OCR successful, text length:', textAnnotation.text.length);
+      return textAnnotation.text;
+    }
+  }
+
+  throw new Error('No text detected in image');
+}
+
+// --- RECEIPT PARSING ---
 app.post('/api/parse-receipt', async (req, res) => {
   const { base64Image, mimeType: clientMimeType } = req.body;
   if (!base64Image) {
@@ -585,149 +603,16 @@ app.post('/api/parse-receipt', async (req, res) => {
     else if (base64Image.startsWith('data:image/jpeg') || base64Image.startsWith('data:image/jpg')) mimeType = 'image/jpeg';
   }
 
-  // Debug: Save image (only in development)
-  if (process.env.NODE_ENV === 'development') {
-    const testFileName = mimeType === 'image/png' ? 'test_upload.png' : 'test_upload.jpg';
-    try {
-      fs.writeFileSync(testFileName, Buffer.from(cleanBase64, 'base64'));
-      console.log('🖼️ Saved test image as', testFileName);
-    } catch (e) {
-      console.error('⚠️ Failed to save test image:', e);
-    }
-  }
+  console.log('📄 Processing receipt with Google Cloud Vision');
+  console.log('🖼️ Mime type:', mimeType);
+  
+  const imageBuffer = Buffer.from(cleanBase64, 'base64');
+  const imageSizeMB = imageBuffer.length / 1024 / 1024;
+  console.log(`📊 Image size: ${imageSizeMB.toFixed(2)}MB`);
 
   try {
-    console.log('📄 Processing document with OCR.space API');
-    console.log('🖼️ Mime type:', mimeType);
-    
-    const imageBuffer = Buffer.from(cleanBase64, 'base64');
-    const imageSizeMB = imageBuffer.length / 1024 / 1024;
-    console.log(`📊 Image size: ${imageSizeMB.toFixed(2)}MB`);
-
-    // Check size limit (OCR.space free tier = 1MB)
-    if (imageSizeMB > 1) {
-      console.warn('⚠️ Image exceeds 1MB limit for free tier');
-    }
-
-    // --- OCR.space API Request ---
-// Replace everything from line 575 to line 650 with this single clean version:
-
-    // --- OCR.space API Request with FILE UPLOAD ---
-    const filename = mimeType === 'image/png' ? 'receipt.png' : 'receipt.jpg';
-
-    async function submitOcrAttempt({ endpoint, engine, useBase64, label }) {
-      const formData = new FormData();
-      formData.append('apikey', OCR_SPACE_API_KEY);
-      formData.append('language', 'eng');
-      formData.append('isOverlayRequired', 'false');
-      formData.append('detectOrientation', 'true');
-      formData.append('scale', 'true');
-      formData.append('OCREngine', engine);
-      if (useBase64) {
-        formData.append('base64Image', `data:${mimeType};base64,${cleanBase64}`);
-      } else {
-        formData.append('file', imageBuffer, {
-          filename,
-          contentType: mimeType
-        });
-      }
-
-      console.log('📤 Sending OCR request:', label, {
-        endpoint,
-        engine,
-        mode: useBase64 ? 'base64' : 'file',
-        size: `${imageSizeMB.toFixed(2)}MB`,
-        contentType: mimeType,
-        apiKeyPrefix: OCR_SPACE_API_KEY.substring(0, 10)
-      });
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        body: formData,
-        headers: formData.getHeaders(),
-      });
-      console.log('📝 OCR.space HTTP status:', response.status);
-      const responseText = await response.text();
-      console.log('📝 OCR.space raw response (first 500 chars):', responseText.substring(0, 500));
-      if (!response.ok) {
-        throw new Error(responseText || `HTTP ${response.status}`);
-      }
-      if (!responseText.trim().startsWith('{') && !responseText.trim().startsWith('[')) {
-        throw new Error(responseText);
-      }
-      const parsed = JSON.parse(responseText);
-      if (parsed.OCRExitCode > 1) {
-        const message = parsed.ErrorMessage?.[0] || 'Unknown OCR error';
-        throw new Error(message);
-      }
-      if (parsed.IsErroredOnProcessing) {
-        const message = parsed.ErrorMessage?.[0] || parsed.ErrorDetails || 'Unknown OCR error';
-        throw new Error(message);
-      }
-      return parsed;
-    }
-
-    const attempts = [
-      { endpoint: 'https://api.ocr.space/parse/image', engine: '2', useBase64: false, label: 'file-engine2' },
-      { endpoint: 'https://api.ocr.space/parse/image', engine: '1', useBase64: false, label: 'file-engine1' },
-      { endpoint: 'https://api.ocr.space/parse/image', engine: '2', useBase64: true, label: 'base64-engine2' },
-      { endpoint: 'https://api.ocr.space/parse/image', engine: '1', useBase64: true, label: 'base64-engine1' },
-      { endpoint: 'https://apipro1.ocr.space/parse/image', engine: '2', useBase64: false, label: 'file-engine2-proxy1' },
-      { endpoint: 'https://apipro1.ocr.space/parse/image', engine: '1', useBase64: true, label: 'base64-engine1-proxy1' },
-    ];
-
-    let ocrResult;
-    let lastError;
-
-    for (const attempt of attempts) {
-      try {
-        ocrResult = await submitOcrAttempt(attempt);
-        if (ocrResult) {
-          break;
-        }
-      } catch (err) {
-        lastError = err;
-        console.warn('⚠️ OCR attempt failed:', attempt.label, err.message);
-      }
-    }
-
-    if (!ocrResult) {
-      console.log('♻️ Falling back to OpenAI vision OCR');
-      const aiText = await extractTextWithOpenAi(cleanBase64, mimeType);
-      if (aiText) {
-        const aiLines = aiText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
-        let aiItems = parseReceiptLinesRuleBased(aiLines);
-        if (openai) {
-          try {
-            aiItems = await categorizeLineItemsWithAI(aiItems);
-          } catch (err) {
-            console.warn('AI categorization failed for OpenAI OCR:', err.message);
-          }
-        }
-        return res.json({
-          success: true,
-          text: aiText,
-          lineItems: aiItems,
-          confidence: 0.6,
-          source: 'openai-vision'
-        });
-      }
-      console.error('❌ OCR.space failed after retries:', lastError?.message || lastError);
-      return res.status(502).json({
-        error: 'OCR processing failed',
-        details: lastError?.message || 'OCR provider error'
-      });
-    }
-
-    if (!ocrResult.ParsedResults || ocrResult.ParsedResults.length === 0) {
-      return res.status(500).json({
-        error: 'OCR processing failed',
-        details: 'No text could be extracted from the image'
-      });
-    }
-
-    const text = ocrResult.ParsedResults[0].ParsedText || '';
-    console.log('✅ OCR successful, extracted text length:', text.length);
+    // Extract text using Google Cloud Vision
+    const text = await extractTextWithGoogleVision(cleanBase64);
 
     // Parse line items from OCR text
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
@@ -746,11 +631,12 @@ app.post('/api/parse-receipt', async (req, res) => {
       success: true,
       text,
       lineItems,
-      confidence: ocrResult.ParsedResults[0].TextOverlay?.Lines ? 0.8 : 0.7
+      confidence: 0.9,
+      source: 'google-vision'
     });
 
   } catch (err) {
-    console.error('❌ OCR.space error:', err.message);
+    console.error('❌ Google Cloud Vision error:', err.message);
     res.status(500).json({
       error: 'OCR processing failed',
       details: err.message
@@ -844,7 +730,7 @@ function parseReceiptLinesRuleBased(lines) {
 
 // --- START SERVER ---
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${PORT} with OCR.space`);
+  console.log(`🚀 Server running on port ${PORT} with Google Cloud Vision`);
   console.log(`📍 Health check: http://localhost:${PORT}/health`);
   console.log(`📄 Parse endpoint: http://localhost:${PORT}/api/parse-receipt`);
 });
