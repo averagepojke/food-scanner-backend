@@ -1,9 +1,4 @@
-// server.js - Google Cloud Vision Edition
-// --- SETUP INSTRUCTIONS ---
-// 1. npm install express cors express-rate-limit dotenv openai form-data node-fetch @google-cloud/vision
-// 2. Create .env file with: GOOGLE_CLOUD_VISION_API_KEY=your_key_here
-// 3. Optional: Set OPENAI_API_KEY for AI categorization and meal suggestions
-
+// server-fixed.js - Using Service Account Authentication
 require('dotenv').config();
 console.log('🔧 Environment loaded');
 
@@ -11,11 +6,15 @@ const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const fs = require('fs');
-const FormData = require('form-data');
 const { OpenAI } = require('openai');
+const vision = require('@google-cloud/vision');
+
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
-const GOOGLE_VISION_API_KEY = process.env.GOOGLE_CLOUD_VISION_API_KEY;
+// Initialize Google Cloud Vision with service account
+const visionClient = new vision.ImageAnnotatorClient({
+  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
+});
 
 const app = express();
 app.set('trust proxy', 1);
@@ -44,12 +43,12 @@ const PORT = process.env.PORT || 3001;
 // --- LOG CONFIG ON STARTUP ---
 console.log('🚀 Server starting up...');
 console.log('📋 Configuration:');
-console.log('   Google Cloud Vision API Key:', GOOGLE_VISION_API_KEY ? `✅ (${GOOGLE_VISION_API_KEY.substring(0, 10)}...)` : '❌');
+console.log('   Google Service Account:', process.env.GOOGLE_APPLICATION_CREDENTIALS ? '✅' : '❌');
 console.log('   OpenAI API Key:', openai ? '✅' : '❌');
 console.log('   Port:', PORT);
 
-if (!GOOGLE_VISION_API_KEY) {
-  console.error('❌ GOOGLE_CLOUD_VISION_API_KEY not set. Get one from https://console.cloud.google.com/');
+if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  console.error('❌ GOOGLE_APPLICATION_CREDENTIALS not set');
 }
 
 // --- ENDPOINTS ---
@@ -530,56 +529,22 @@ async function categorizeLineItemsWithAI(lineItems) {
   return lineItems.map(item => ({ ...item, category: 'other' }));
 }
 
-// --- GOOGLE CLOUD VISION OCR ---
+// --- GOOGLE CLOUD VISION OCR WITH SERVICE ACCOUNT ---
 async function extractTextWithGoogleVision(base64Image) {
-  if (!GOOGLE_VISION_API_KEY) {
-    throw new Error('Google Cloud Vision API key not configured');
-  }
-
-  const apiUrl = `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`;
-  
-  const requestBody = {
-    requests: [
-      {
-        image: {
-          content: base64Image
-        },
-        features: [
-          {
-            type: 'DOCUMENT_TEXT_DETECTION',
-            maxResults: 1
-          }
-        ]
-      }
-    ]
-  };
-
   console.log('📤 Sending request to Google Cloud Vision API');
   
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(requestBody)
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('❌ Google Vision API error:', response.status, errorText);
-    throw new Error(`Google Vision API error: ${response.status}`);
-  }
-
-  const result = await response.json();
+  const imageBuffer = Buffer.from(base64Image, 'base64');
   
-  if (result.responses && result.responses[0]) {
-    const textAnnotation = result.responses[0].fullTextAnnotation;
-    if (textAnnotation && textAnnotation.text) {
-      console.log('✅ Google Vision OCR successful, text length:', textAnnotation.text.length);
-      return textAnnotation.text;
-    }
+  const [result] = await visionClient.documentTextDetection({
+    image: { content: imageBuffer }
+  });
+  
+  const fullTextAnnotation = result.fullTextAnnotation;
+  if (fullTextAnnotation && fullTextAnnotation.text) {
+    console.log('✅ Google Vision OCR successful, text length:', fullTextAnnotation.text.length);
+    return fullTextAnnotation.text;
   }
-
+  
   throw new Error('No text detected in image');
 }
 
