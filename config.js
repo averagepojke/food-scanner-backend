@@ -8,24 +8,24 @@ const resolveDefaultBaseUrl = () => {
     if (process.env.EXPO_PUBLIC_API_BASE_URL) {
       return process.env.EXPO_PUBLIC_API_BASE_URL;
     }
-    
-    // Derive host from the Expo packager host when available (works for Expo Go on phone)
-    // Examples: "192.168.1.23:19000" or "localhost:19000"
-    const hostUri = (Constants?.expoConfig && Constants.expoConfig.hostUri) || (Constants?.manifest && Constants.manifest.debuggerHost) || '';
-    let host = String(hostUri).split(':')[0] || 'localhost';
-    if (Platform.OS === 'android' && (host === 'localhost' || host === '127.0.0.1')) {
-      // For Android emulator, we need to use 10.0.2.2 to access host machine
-      host = '10.0.2.2';
+
+    // Use deployed Railway URL for both development and production
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      return 'https://food-scanner-backend-n1q3.onrender.com';
     }
-    return `http://${host}:3001`;
+
+    // Always use deployed Railway URL for production
+    return 'https://food-scanner-backend-n1q3.onrender.com';
   } catch (e) {
-    // Fallback for any errors
-    const host = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
-    return `http://${host}:3001`;
+    // Fallback to localhost in development, Railway in production
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      return 'http://172.21.176.1:3001';
+    }
+    return 'https://food-scanner-backend-n1q3.onrender.com';
   }
 };
 
-export const API_BASE_URL = 'https://food-scanner-backend-production-dcec.up.railway.app';
+export const API_BASE_URL = resolveDefaultBaseUrl();
 
 if (typeof __DEV__ !== 'undefined' && __DEV__) {
   // Helpful dev log to confirm which base URL the app is using

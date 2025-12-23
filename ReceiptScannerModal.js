@@ -1,3 +1,4 @@
+
 import React, { useState, useRef } from 'react';
 import { View, Text, Modal, TouchableOpacity, StyleSheet, ActivityIndicator, Image, ScrollView, Alert, TextInput } from 'react-native';
 import { CameraView, Camera } from 'expo-camera';

@@ -1,18 +1,24 @@
-# Receipt OCR Fix - TODO
+# TODO: Improve Tesseract OCR Accuracy
 
-## Completed Tasks
-- [x] Analyze the server.js parse-receipt endpoint
-- [x] Identify that OCR processing was failing due to Document AI errors causing fallback to Vision API
-- [x] Refactor OCR logic to try both Vision API and Document AI in parallel
-- [x] Prioritize Vision API for reliable text extraction
-- [x] Use Document AI for structured line items when available
-- [x] Fall back to rule-based parsing from OCR text if no structured data
-- [x] Ensure consistent response format with text, entities, lineItems, and confidence
-- [x] Start the backend server successfully
+## Current Status
+- Tesseract.js is integrated and working for receipt and expiry date OCR
+- Basic preprocessing pipeline exists but can be enhanced
+- Simple parameter tuning in place
 
-## Next Steps
-- [ ] Test the receipt scanning functionality with sample images
-- [ ] Verify that OCR text is extracted properly
-- [ ] Confirm that line items are parsed correctly from the text
-- [ ] Check that categorization works for the parsed items
-- [ ] Deploy and test in production environment if needed
+## Tasks
+- [ ] Enhance image preprocessing pipeline (noise reduction, thresholding, contrast)
+- [ ] Tune Tesseract parameters (PSM modes, character whitelist, engine modes)
+- [ ] Add multiple OCR passes with different settings
+- [ ] Improve rotation correction and orientation detection
+- [ ] Add better error handling and fallback mechanisms
+- [ ] Implement confidence scoring and quality assessment
+- [ ] Add sample testing and monitoring
+- [ ] Test /api/parse-receipt endpoint with improved OCR
+
+## Files to Edit
+- food-scanner-app/food-scanner-backend/server.js (main OCR logic)
+
+## Followup Steps
+- Test enhanced OCR with sample receipt image
+- Verify improved accuracy on various receipt types
+- Monitor performance and error rates

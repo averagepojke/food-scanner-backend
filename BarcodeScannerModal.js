@@ -5,6 +5,155 @@ import { CameraView, Camera } from 'expo-camera';
 import { getTheme } from './theme';
 import { ShoppingListContext } from './App';
 import { predictExpiryDate } from './food-scanner-app/utils';
+import { API_BASE_URL } from './config';
+
+// Parse expiry date from OCR text (same logic as backend)
+function parseExpiryDate(ocrText) {
+  if (!ocrText || typeof ocrText !== 'string') return null;
+
+  // Clean and normalize the text
+  const cleanText = ocrText.replace(/\s+/g, ' ').toLowerCase().trim();
+
+  // Common expiry date patterns
+  const patterns = [
+    // DD/MM/YY or DD/MM/YYYY
+    /\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/g,
+    // MM/DD/YY or MM/DD/YYYY
+    /\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/g,
+    // YY/MM/DD or YYYY/MM/DD
+    /\b(\d{2,4})[\/\-](\d{1,2})[\/\-](\d{1,2})\b/g,
+    // DD.MM.YY or DD.MM.YYYY
+    /\b(\d{1,2})\.(\d{1,2})\.(\d{2,4})\b/g,
+    // MM.DD.YY or MM.DD.YYYY
+    /\b(\d{1,2})\.(\d{1,2})\.(\d{2,4})\b/g,
+    // YY.MM.DD or YYYY.MM.DD
+    /\b(\d{2,4})\.(\d{1,2})\.(\d{1,2})\b/g,
+    // DD MMM YY or DD MMM YYYY (e.g., 15 JAN 23)
+    /\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{2,4})\b/gi,
+    // MMM DD YY or MMM DD YYYY (e.g., JAN 15 23)
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})\s+(\d{2,4})\b/gi,
+    // DD Month YY or DD Month YYYY (e.g., 15 January 2023)
+    /\b(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{2,4})\b/gi,
+    // Month DD YY or Month DD YYYY (e.g., January 15 2023)
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})\s+(\d{2,4})\b/gi,
+    // Just numbers like 151223 (DDMMYY)
+    /\b(\d{2})(\d{2})(\d{2})\b/g,
+    // Just numbers like 15122023 (DDMMYYYY)
+    /\b(\d{2})(\d{2})(\d{4})\b/g,
+  ];
+
+  const monthNames = {
+    jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+    jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+    january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+    july: 6, august: 7, september: 8, october: 9, november: 10, december: 11
+  };
+
+  let bestMatch = null;
+  let bestScore = 0;
+
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(cleanText)) !== null) {
+      try {
+        let day, month, year;
+
+        if (pattern.source.includes('jan|feb|mar') || pattern.source.includes('january|february')) {
+          // Text month patterns
+          if (match[1] && isNaN(match[1])) {
+            // Month DD YY
+            month = monthNames[match[1].toLowerCase()];
+            day = parseInt(match[2]);
+            year = parseInt(match[3]);
+          } else {
+            // DD Month YY
+            day = parseInt(match[1]);
+            month = monthNames[match[2].toLowerCase()];
+            year = parseInt(match[3]);
+          }
+        } else if (pattern.source.includes('151223') || pattern.source.includes('15122023')) {
+          // DDMMYY or DDMMYYYY
+          day = parseInt(match[1]);
+          month = parseInt(match[2]) - 1; // JS months are 0-based
+          year = parseInt(match[3]);
+        } else {
+          // Numeric patterns
+          const num1 = parseInt(match[1]);
+          const num2 = parseInt(match[2]);
+          const num3 = parseInt(match[3]);
+
+          // Heuristics to determine DD/MM/YY vs MM/DD/YY vs YY/MM/DD
+          if (num3 >= 1000) {
+            // YYYY format
+            if (num1 > 31 && num2 <= 12) {
+              // Likely YY/MM/DD
+              year = num1;
+              month = num2 - 1;
+              day = num3;
+            } else if (num1 <= 12 && num2 <= 31) {
+              // Could be MM/DD/YYYY or DD/MM/YYYY
+              // Assume DD/MM/YYYY for international format
+              day = num1;
+              month = num2 - 1;
+              year = num3;
+            } else {
+              day = num1;
+              month = num2 - 1;
+              year = num3;
+            }
+          } else {
+            // YY format - assume 2000s
+            year = num3 >= 50 ? 1900 + num3 : 2000 + num3;
+
+            if (num1 > 12) {
+              // Likely DD/MM/YY
+              day = num1;
+              month = num2 - 1;
+            } else if (num2 > 12) {
+              // Likely MM/DD/YY
+              month = num1 - 1;
+              day = num2;
+            } else {
+              // Ambiguous, assume DD/MM/YY
+              day = num1;
+              month = num2 - 1;
+            }
+          }
+        }
+
+        // Validate date components
+        if (day < 1 || day > 31 || month < 0 || month > 11 || year < 1900 || year > 2100) {
+          continue;
+        }
+
+        // Create date object
+        const date = new Date(year, month, day);
+        if (isNaN(date.getTime())) continue;
+
+        // Score the match based on context (prefer dates near current date)
+        const now = new Date();
+        const daysDiff = Math.abs((date - now) / (1000 * 60 * 60 * 24));
+        let score = 1000 - daysDiff; // Prefer dates closer to today
+
+        // Boost score for dates in the future (expiry dates are usually future)
+        if (date > now) score += 500;
+
+        // Boost score for reasonable expiry periods (not too far in future)
+        if (daysDiff < 365 * 5) score += 200; // Within 5 years
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = date.toISOString().split('T')[0]; // YYYY-MM-DD format
+        }
+      } catch (e) {
+        // Skip invalid date parsing
+        continue;
+      }
+    }
+  }
+
+  return bestMatch;
+}
 
 // Simple date extraction from text (prioritizing UK format DD/MM/YYYY)
 const extractDateFromText = (text) => {
@@ -283,15 +432,47 @@ export default function BarcodeScannerModal({ visible, onClose, onProductScanned
     }
   };
 
-  // Handle expiry date scanning (different from barcode scanning)
-  const handleExpiryScanned = ({ type, data }) => {
-    // For expiry scanning, we want to extract text, not barcodes
-    // This is a simplified approach - in a real app you'd use OCR
-    if (data && data.length > 0) {
-      setScannedExpiryText(data);
-      const extractedDate = extractDateFromText(data);
-      if (extractedDate) {
-        setExpiryValue(extractedDate);
+  // Handle expiry photo capture and OCR
+  const handleExpiryPhotoCapture = async () => {
+    if (!cameraRef.current) return;
+
+    try {
+      setLoading(true);
+      setScannedExpiryText('Processing...');
+
+      // Take photo
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.8,
+        base64: true,
+        exif: false,
+      });
+
+      // Send to backend OCR using centralized config (same as receipt scanner)
+      const response = await fetch(`${API_BASE_URL}/api/parse-receipt`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          base64Image: photo.base64,
+          mimeType: 'image/jpeg',
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      const ocrText = data.text || '';
+
+      // Parse expiry date from OCR text using the same logic as backend
+      const expiryDate = parseExpiryDate(ocrText);
+
+      if (expiryDate) {
+        setExpiryValue(expiryDate);
+        setScannedExpiryText(`✓ Date found: ${expiryDate}`);
         // Auto-advance to next step after successful scan
         setTimeout(() => {
           if (!pendingProduct.price) {
@@ -300,11 +481,16 @@ export default function BarcodeScannerModal({ visible, onClose, onProductScanned
           } else {
             setMode('confirm');
           }
-        }, 1500); // Give user time to see the success message
+        }, 1500);
       } else {
-        // Don't show alert for every scan that doesn't contain a date
-        // Just update the display
+        setScannedExpiryText(ocrText ? `No date found in: ${ocrText.substring(0, 50)}...` : 'No date detected - try again');
       }
+    } catch (error) {
+      console.error('Expiry OCR failed:', error);
+      setScannedExpiryText('Failed to process image - try again');
+      Alert.alert('Error', 'Failed to scan expiry date. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -477,18 +663,12 @@ export default function BarcodeScannerModal({ visible, onClose, onProductScanned
                 {pendingProduct?.name ? `Scan the expiry date for ${pendingProduct.name}` : 'Scan expiry date:'}
               </Text>
 
-              {/* Camera for expiry scanning */}
+              {/* Camera for expiry photo capture */}
               <CameraView
                 ref={cameraRef}
                 style={styles.expiryScanArea}
                 facing="back"
                 flash={torch ? 'torch' : 'off'}
-                onBarcodeScanned={scanned ? undefined : handleExpiryScanned}
-                barcodeScannerSettings={{
-                  barcodeTypes: [
-                    'qr', 'pdf417', 'aztec', 'ean13', 'ean8', 'upc_e', 'code39', 'code93', 'code128', 'codabar', 'itf14', 'upc_a'
-                  ],
-                }}
               >
                 <View style={styles.expiryScanFrame}>
                   <View style={[styles.expiryCorner, styles.expiryTopLeft]} />
@@ -497,20 +677,32 @@ export default function BarcodeScannerModal({ visible, onClose, onProductScanned
                   <View style={[styles.expiryCorner, styles.expiryBottomRight]} />
                 </View>
                 <Text style={styles.expiryScanText}>
-                  Point camera at expiry date
+                  Point camera at expiry date and tap "Take Photo"
                 </Text>
                 {scannedExpiryText ? (
                   <View style={styles.scannedTextContainer}>
-                    <Text style={styles.scannedTextLabel}>Last Scanned:</Text>
+                    <Text style={styles.scannedTextLabel}>Result:</Text>
                     <Text style={styles.scannedText}>{scannedExpiryText}</Text>
                     {expiryValue ? (
                       <Text style={styles.extractedDateText}>✓ Date found: {expiryValue}</Text>
                     ) : (
-                      <Text style={styles.noDateText}>No date detected - try manual entry</Text>
+                      <Text style={styles.noDateText}>No date detected - try again</Text>
                     )}
                   </View>
                 ) : null}
               </CameraView>
+
+              {/* Take Photo button */}
+              <TouchableOpacity
+                style={[styles.takePhotoButton, loading && styles.takePhotoButtonDisabled]}
+                onPress={handleExpiryPhotoCapture}
+                disabled={loading}
+              >
+                <MaterialCommunityIcons name="camera" size={24} color="#fff" />
+                <Text style={styles.takePhotoButtonText}>
+                  {loading ? 'Processing...' : 'Take Photo'}
+                </Text>
+              </TouchableOpacity>
 
               {/* Manual expiry input */}
               <View style={[styles.priceInputRow, { marginTop: 20 }]}>
@@ -1144,5 +1336,33 @@ const styles = StyleSheet.create({
     color: '#FFC107',
     fontSize: 12,
     marginTop: 4,
+  },
+  takePhotoButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#007AFF',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    marginTop: 16,
+    gap: 10,
+    shadowColor: '#007AFF',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  takePhotoButtonDisabled: {
+    backgroundColor: '#666666',
+    shadowOpacity: 0,
+  },
+  takePhotoButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
